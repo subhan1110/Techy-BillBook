@@ -2,7 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { CheckCircle2, ExternalLink, Globe, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
 import { useBillBook } from '../../context/BillBookContext';
-import { GoogleSignInErrorKind, GoogleSignInFailure } from '../../firebase/firebaseApp';
+import {
+  GoogleAuthMethod,
+  GoogleSignInErrorKind,
+  GoogleSignInFailure,
+  firebaseInitStatus,
+} from '../../firebase/firebaseApp';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 
 const GoogleGIcon: React.FC = () => (
@@ -31,6 +36,8 @@ interface MappedAuthError {
   message: string;
   code?: string;
   detail?: string;
+  authMethod?: GoogleAuthMethod;
+  hostname: string;
 }
 
 export const WelcomeScreen: React.FC = () => {
@@ -64,7 +71,10 @@ export const WelcomeScreen: React.FC = () => {
     }
   }, []);
 
-  const mapSignInFailure = (err: unknown): MappedAuthError => {
+  const mapSignInFailure = (
+    err: unknown,
+    fallbackMethod: GoogleAuthMethod = 'signInWithPopup'
+  ): MappedAuthError => {
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
     if (err instanceof GoogleSignInFailure) {
       let message: string = t.onboarding.errorGeneric;
@@ -86,18 +96,22 @@ export const WelcomeScreen: React.FC = () => {
         message,
         code: err.errorCode,
         detail: err.message,
+        authMethod: err.authMethod ?? fallbackMethod,
+        hostname: host,
       };
     }
     return {
       kind: 'generic',
       message: t.onboarding.errorGeneric,
       detail: err instanceof Error ? err.message : String(err),
+      authMethod: fallbackMethod,
+      hostname: host,
     };
   };
 
   useEffect(() => {
     if (authRedirectError) {
-      setAuthError(mapSignInFailure(authRedirectError));
+      setAuthError(mapSignInFailure(authRedirectError, 'getRedirectResult'));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authRedirectError, language]);
@@ -110,7 +124,7 @@ export const WelcomeScreen: React.FC = () => {
       await signInWithGoogle();
     } catch (err) {
       if (mountedRef.current) {
-        setAuthError(mapSignInFailure(err));
+        setAuthError(mapSignInFailure(err, 'signInWithPopup'));
       }
     } finally {
       if (mountedRef.current) {
@@ -127,7 +141,7 @@ export const WelcomeScreen: React.FC = () => {
       await signInWithGoogleUsingRedirect();
     } catch (err) {
       if (mountedRef.current) {
-        setAuthError(mapSignInFailure(err));
+        setAuthError(mapSignInFailure(err, 'signInWithRedirect'));
         setRedirectLoading(false);
       }
     }
@@ -261,10 +275,21 @@ export const WelcomeScreen: React.FC = () => {
             {authError && (
               <div className="rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 px-4 py-3 text-xs text-red-700 dark:text-red-300 space-y-1.5">
                 <p className="leading-relaxed">{authError.message}</p>
-                {import.meta.env.DEV && (authError.code || authError.detail) && (
-                  <p className="text-[11px] font-mono-num text-red-600/80 dark:text-red-400/80 break-all">
-                    {authError.code ? `Code: ${authError.code}` : authError.detail}
-                  </p>
+                {import.meta.env.DEV && (
+                  <div className="pt-1.5 border-t border-red-200/70 dark:border-red-900/60 text-[11px] font-mono-num text-red-700/90 dark:text-red-300/90 space-y-0.5 break-all">
+                    <div>Code: {authError.code || 'unknown'}</div>
+                    <div>Message: {authError.detail || authError.message}</div>
+                    <div>Method: {authError.authMethod || 'signInWithPopup'}</div>
+                    <div>Hostname: {authError.hostname || 'unknown'}</div>
+                    <div>
+                      Firebase Init:{' '}
+                      {firebaseInitStatus.firebaseInitialized ? 'succeeded' : 'failed'}
+                    </div>
+                    <div>
+                      Google Provider Init:{' '}
+                      {firebaseInitStatus.googleProviderInitialized ? 'succeeded' : 'failed'}
+                    </div>
+                  </div>
                 )}
               </div>
             )}

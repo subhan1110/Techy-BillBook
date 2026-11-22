@@ -30,6 +30,11 @@ googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
 
+export const firebaseInitStatus = {
+  firebaseInitialized: Boolean(app && auth && db),
+  googleProviderInitialized: googleProvider instanceof GoogleAuthProvider,
+};
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -102,20 +107,34 @@ export type GoogleSignInErrorKind =
   | 'network'
   | 'generic';
 
+export type GoogleAuthMethod = 'signInWithPopup' | 'signInWithRedirect' | 'getRedirectResult';
+
 export class GoogleSignInFailure extends Error {
   readonly kind: GoogleSignInErrorKind;
   readonly errorCode?: string;
+  readonly authMethod?: GoogleAuthMethod;
 
-  constructor(kind: GoogleSignInErrorKind, message: string, errorCode?: string) {
+  constructor(
+    kind: GoogleSignInErrorKind,
+    message: string,
+    errorCode?: string,
+    authMethod?: GoogleAuthMethod
+  ) {
     super(message);
     this.kind = kind;
     this.errorCode = errorCode;
+    this.authMethod = authMethod;
   }
 }
 
-export function classifyFirebaseAuthError(err: unknown): GoogleSignInFailure {
+export function classifyFirebaseAuthError(
+  err: unknown,
+  authMethod?: GoogleAuthMethod
+): GoogleSignInFailure {
   if (err instanceof GoogleSignInFailure) {
-    return err;
+    return authMethod && !err.authMethod
+      ? new GoogleSignInFailure(err.kind, err.message, err.errorCode, authMethod)
+      : err;
   }
   if (err instanceof FirebaseError) {
     if (
@@ -124,31 +143,33 @@ export function classifyFirebaseAuthError(err: unknown): GoogleSignInFailure {
       err.code === 'auth/user-cancelled' ||
       err.code === 'auth/redirect-cancelled-by-user'
     ) {
-      return new GoogleSignInFailure('popup_closed', err.message, err.code);
+      return new GoogleSignInFailure('popup_closed', err.message, err.code, authMethod);
     }
     if (err.code === 'auth/popup-blocked') {
-      return new GoogleSignInFailure('popup_blocked', err.message, err.code);
+      return new GoogleSignInFailure('popup_blocked', err.message, err.code, authMethod);
     }
     if (err.code === 'auth/unauthorized-domain') {
-      return new GoogleSignInFailure('unauthorized_domain', err.message, err.code);
+      return new GoogleSignInFailure('unauthorized_domain', err.message, err.code, authMethod);
     }
     if (err.code === 'auth/operation-not-allowed') {
-      return new GoogleSignInFailure('operation_not_allowed', err.message, err.code);
+      return new GoogleSignInFailure('operation_not_allowed', err.message, err.code, authMethod);
     }
     if (
       err.code === 'auth/operation-not-supported-in-this-environment' ||
       err.code === 'auth/web-storage-unsupported'
     ) {
-      return new GoogleSignInFailure('unsupported_env', err.message, err.code);
+      return new GoogleSignInFailure('unsupported_env', err.message, err.code, authMethod);
     }
     if (err.code === 'auth/network-request-failed') {
-      return new GoogleSignInFailure('network', err.message, err.code);
+      return new GoogleSignInFailure('network', err.message, err.code, authMethod);
     }
-    return new GoogleSignInFailure('generic', err.message, err.code);
+    return new GoogleSignInFailure('generic', err.message, err.code, authMethod);
   }
   return new GoogleSignInFailure(
     'generic',
-    err instanceof Error ? err.message : 'Google Sign-In failed'
+    err instanceof Error ? err.message : 'Google Sign-In failed',
+    undefined,
+    authMethod
   );
 }
 
@@ -157,7 +178,7 @@ export async function signInWithGooglePopup(): Promise<User> {
     const credential = await signInWithPopup(auth, googleProvider);
     return credential.user;
   } catch (err) {
-    throw classifyFirebaseAuthError(err);
+    throw classifyFirebaseAuthError(err, 'signInWithPopup');
   }
 }
 
@@ -165,7 +186,7 @@ export async function signInWithGoogleRedirect(): Promise<void> {
   try {
     await signInWithRedirect(auth, googleProvider);
   } catch (err) {
-    throw classifyFirebaseAuthError(err);
+    throw classifyFirebaseAuthError(err, 'signInWithRedirect');
   }
 }
 
@@ -174,7 +195,7 @@ export async function resolveGoogleRedirectResult(): Promise<User | null> {
     const result = await getRedirectResult(auth);
     return result?.user ?? null;
   } catch (err) {
-    throw classifyFirebaseAuthError(err);
+    throw classifyFirebaseAuthError(err, 'getRedirectResult');
   }
 }
 
