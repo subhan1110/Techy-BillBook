@@ -3,7 +3,9 @@ import {
   GoogleAuthProvider,
   User,
   getAuth,
+  getRedirectResult,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
 import {
@@ -91,43 +93,88 @@ async function testConnection(): Promise<void> {
 }
 void testConnection();
 
-export type GoogleSignInErrorKind = 'popup_closed' | 'popup_blocked' | 'network' | 'generic';
+export type GoogleSignInErrorKind =
+  | 'popup_closed'
+  | 'popup_blocked'
+  | 'unauthorized_domain'
+  | 'operation_not_allowed'
+  | 'unsupported_env'
+  | 'network'
+  | 'generic';
 
 export class GoogleSignInFailure extends Error {
   readonly kind: GoogleSignInErrorKind;
-  constructor(kind: GoogleSignInErrorKind, message: string) {
+  readonly errorCode?: string;
+
+  constructor(kind: GoogleSignInErrorKind, message: string, errorCode?: string) {
     super(message);
     this.kind = kind;
+    this.errorCode = errorCode;
   }
 }
 
-export async function signInWithGooglePopup(): Promise<User> {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    throw new GoogleSignInFailure('network', 'Offline: network required for Google Sign-In');
+export function classifyFirebaseAuthError(err: unknown): GoogleSignInFailure {
+  if (err instanceof GoogleSignInFailure) {
+    return err;
   }
+  if (err instanceof FirebaseError) {
+    if (
+      err.code === 'auth/popup-closed-by-user' ||
+      err.code === 'auth/cancelled-popup-request' ||
+      err.code === 'auth/user-cancelled' ||
+      err.code === 'auth/redirect-cancelled-by-user'
+    ) {
+      return new GoogleSignInFailure('popup_closed', err.message, err.code);
+    }
+    if (err.code === 'auth/popup-blocked') {
+      return new GoogleSignInFailure('popup_blocked', err.message, err.code);
+    }
+    if (err.code === 'auth/unauthorized-domain') {
+      return new GoogleSignInFailure('unauthorized_domain', err.message, err.code);
+    }
+    if (err.code === 'auth/operation-not-allowed') {
+      return new GoogleSignInFailure('operation_not_allowed', err.message, err.code);
+    }
+    if (
+      err.code === 'auth/operation-not-supported-in-this-environment' ||
+      err.code === 'auth/web-storage-unsupported'
+    ) {
+      return new GoogleSignInFailure('unsupported_env', err.message, err.code);
+    }
+    if (err.code === 'auth/network-request-failed') {
+      return new GoogleSignInFailure('network', err.message, err.code);
+    }
+    return new GoogleSignInFailure('generic', err.message, err.code);
+  }
+  return new GoogleSignInFailure(
+    'generic',
+    err instanceof Error ? err.message : 'Google Sign-In failed'
+  );
+}
+
+export async function signInWithGooglePopup(): Promise<User> {
   try {
     const credential = await signInWithPopup(auth, googleProvider);
     return credential.user;
   } catch (err) {
-    if (err instanceof FirebaseError) {
-      if (
-        err.code === 'auth/popup-closed-by-user' ||
-        err.code === 'auth/cancelled-popup-request' ||
-        err.code === 'auth/user-cancelled'
-      ) {
-        throw new GoogleSignInFailure('popup_closed', err.message);
-      }
-      if (err.code === 'auth/popup-blocked') {
-        throw new GoogleSignInFailure('popup_blocked', err.message);
-      }
-      if (err.code === 'auth/network-request-failed') {
-        throw new GoogleSignInFailure('network', err.message);
-      }
-    }
-    throw new GoogleSignInFailure(
-      'generic',
-      err instanceof Error ? err.message : 'Google Sign-In failed'
-    );
+    throw classifyFirebaseAuthError(err);
+  }
+}
+
+export async function signInWithGoogleRedirect(): Promise<void> {
+  try {
+    await signInWithRedirect(auth, googleProvider);
+  } catch (err) {
+    throw classifyFirebaseAuthError(err);
+  }
+}
+
+export async function resolveGoogleRedirectResult(): Promise<User | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    return result?.user ?? null;
+  } catch (err) {
+    throw classifyFirebaseAuthError(err);
   }
 }
 
@@ -145,6 +192,14 @@ function timestampToIso(val: unknown, fallback: string): string {
   }
   if (typeof val === 'string') return val;
   return fallback;
+}
+
+export function isOfflineFirestoreError(error: unknown): boolean {
+  if (error instanceof FirebaseError && error.code === 'unavailable') {
+    return true;
+  }
+  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return msg.includes('the client is offline') || msg.includes('client is offline');
 }
 
 export async function fetchRemoteUserProfile(uid: string): Promise<UserShopProfile | null> {
@@ -168,7 +223,7 @@ export async function fetchRemoteUserProfile(uid: string): Promise<UserShopProfi
       updatedAt: timestampToIso(d.updatedAt, nowIso),
     };
   } catch (error) {
-    if (error instanceof FirebaseError && error.code === 'unavailable') {
+    if (isOfflineFirestoreError(error)) {
       return null;
     }
     handleFirestoreError(error, OperationType.GET, path);
@@ -189,13 +244,15 @@ export async function saveRemoteUserProfile(input: {
   const path = `users/${input.uid}`;
   const docRef = doc(db, 'users', input.uid);
 
+  const fallbackEmail =
+    auth.currentUser?.email || auth.currentUser?.providerData?.find((p) => p.email)?.email || '';
   const sanitizedOwner = clampString(input.ownerName, 120) || 'Shop Owner';
   const sanitizedShop = clampString(input.shopName, 160) || 'Kirana Store';
   const rawDigits = (input.shopPhone || '').replace(/\D/g, '').slice(-10);
   const sanitizedPhone = rawDigits.length === 10 ? rawDigits : '';
   const sanitizedAddress = clampString(input.shopAddress, 300);
   const sanitizedPhoto = clampString(input.photoUrl, 500);
-  const sanitizedEmail = clampString(input.email, 200);
+  const sanitizedEmail = clampString(input.email || fallbackEmail, 200);
 
   let exists = false;
   try {

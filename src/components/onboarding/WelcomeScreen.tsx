@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { CheckCircle2, Globe, ShieldCheck, WifiOff } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Globe, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
 import { useBillBook } from '../../context/BillBookContext';
-import { GoogleSignInFailure } from '../../firebase/firebaseApp';
+import { GoogleSignInErrorKind, GoogleSignInFailure } from '../../firebase/firebaseApp';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 
 const GoogleGIcon: React.FC = () => (
@@ -26,40 +26,119 @@ const GoogleGIcon: React.FC = () => (
   </svg>
 );
 
+interface MappedAuthError {
+  kind: GoogleSignInErrorKind;
+  message: string;
+  code?: string;
+  detail?: string;
+}
+
 export const WelcomeScreen: React.FC = () => {
-  const { t, language, setLanguage, signInWithGoogle } = useBillBook();
+  const {
+    t,
+    language,
+    setLanguage,
+    signInWithGoogle,
+    signInWithGoogleUsingRedirect,
+    authRedirectError,
+    clearAuthRedirectError,
+  } = useBillBook();
   const isOnline = useOnlineStatus();
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [redirectLoading, setRedirectLoading] = useState(false);
+  const [authError, setAuthError] = useState<MappedAuthError | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const isInIframe = useMemo(() => {
+    try {
+      return typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+      return true;
+    }
+  }, []);
+
+  const mapSignInFailure = (err: unknown): MappedAuthError => {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    if (err instanceof GoogleSignInFailure) {
+      let message: string = t.onboarding.errorGeneric;
+      if (err.kind === 'popup_closed') {
+        message = t.onboarding.errorPopupClosed;
+      } else if (err.kind === 'popup_blocked') {
+        message = t.onboarding.errorPopupBlocked;
+      } else if (err.kind === 'unauthorized_domain') {
+        message = t.onboarding.errorUnauthorizedDomain.replace('{{host}}', host);
+      } else if (err.kind === 'operation_not_allowed') {
+        message = t.onboarding.errorOperationNotAllowed;
+      } else if (err.kind === 'unsupported_env') {
+        message = t.onboarding.errorUnsupportedEnv;
+      } else if (err.kind === 'network') {
+        message = t.onboarding.errorNetwork;
+      }
+      return {
+        kind: err.kind,
+        message,
+        code: err.errorCode,
+        detail: err.message,
+      };
+    }
+    return {
+      kind: 'generic',
+      message: t.onboarding.errorGeneric,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  };
+
+  useEffect(() => {
+    if (authRedirectError) {
+      setAuthError(mapSignInFailure(authRedirectError));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authRedirectError, language]);
 
   const handleGoogleLogin = async () => {
-    setErrorMsg(null);
-    if (!isOnline) {
-      setErrorMsg(t.onboarding.offlineAuthWarning);
-      return;
-    }
-
+    setAuthError(null);
+    clearAuthRedirectError();
     setLoading(true);
     try {
       await signInWithGoogle();
     } catch (err) {
-      if (err instanceof GoogleSignInFailure) {
-        if (err.kind === 'popup_closed') {
-          setErrorMsg(t.onboarding.errorPopupClosed);
-        } else if (err.kind === 'popup_blocked') {
-          setErrorMsg(t.onboarding.errorPopupBlocked);
-        } else if (err.kind === 'network') {
-          setErrorMsg(t.onboarding.errorNetwork);
-        } else {
-          setErrorMsg(t.onboarding.errorGeneric);
-        }
-      } else {
-        setErrorMsg(t.onboarding.errorGeneric);
+      if (mountedRef.current) {
+        setAuthError(mapSignInFailure(err));
       }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   };
+
+  const handleRedirectLogin = async () => {
+    setAuthError(null);
+    clearAuthRedirectError();
+    setRedirectLoading(true);
+    try {
+      await signInWithGoogleUsingRedirect();
+    } catch (err) {
+      if (mountedRef.current) {
+        setAuthError(mapSignInFailure(err));
+        setRedirectLoading(false);
+      }
+    }
+  };
+
+  const showFallbackActions =
+    authError !== null &&
+    (authError.kind === 'popup_blocked' ||
+      authError.kind === 'popup_closed' ||
+      authError.kind === 'unsupported_env' ||
+      authError.kind === 'generic');
 
   const highlights =
     language === 'gu'
@@ -162,7 +241,7 @@ export const WelcomeScreen: React.FC = () => {
           </div>
 
           {/* Right Google Sign-In Panel */}
-          <div className="lg:col-span-6 p-7 sm:p-10 flex flex-col justify-center space-y-6">
+          <div className="lg:col-span-6 p-7 sm:p-10 flex flex-col justify-center space-y-5">
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
                 {language === 'gu' ? 'તમારા એકાઉન્ટથી શરૂ કરો' : 'Get Started'}
@@ -179,9 +258,14 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             )}
 
-            {errorMsg && (
-              <div className="rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 px-4 py-3 text-xs text-red-700 dark:text-red-300">
-                {errorMsg}
+            {authError && (
+              <div className="rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 px-4 py-3 text-xs text-red-700 dark:text-red-300 space-y-1.5">
+                <p className="leading-relaxed">{authError.message}</p>
+                {import.meta.env.DEV && (authError.code || authError.detail) && (
+                  <p className="text-[11px] font-mono-num text-red-600/80 dark:text-red-400/80 break-all">
+                    {authError.code ? `Code: ${authError.code}` : authError.detail}
+                  </p>
+                )}
               </div>
             )}
 
@@ -189,14 +273,62 @@ export const WelcomeScreen: React.FC = () => {
             <button
               type="button"
               onClick={handleGoogleLogin}
-              disabled={loading}
+              disabled={loading || redirectLoading}
               className="w-full flex items-center justify-center gap-3 rounded-xl bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-800 border border-slate-300 px-5 py-3.5 text-sm font-semibold shadow-xs transition-all cursor-pointer min-h-[50px] disabled:opacity-60"
             >
               <GoogleGIcon />
               <span>{loading ? t.onboarding.signingIn : t.onboarding.continueWithGoogle}</span>
             </button>
 
-            <div className="pt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            {/* Fallback options if popup is blocked / restricted in iframe or mobile browser */}
+            {showFallbackActions && (
+              <div className="space-y-2.5 pt-1">
+                {!isInIframe && (
+                  <button
+                    type="button"
+                    onClick={handleRedirectLogin}
+                    disabled={loading || redirectLoading}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-4 py-3 text-xs font-semibold transition-colors cursor-pointer min-h-[44px] disabled:opacity-60"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${redirectLoading ? 'animate-spin' : ''}`} />
+                    <span>{t.onboarding.tryRedirectSignIn}</span>
+                  </button>
+                )}
+
+                {isInIframe && typeof window !== 'undefined' && (
+                  <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 p-3.5 space-y-2.5">
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                      {t.onboarding.iframePopupHint}
+                    </p>
+                    <a
+                      href={window.location.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-[#0F294A] hover:bg-[#163864] dark:bg-blue-600 dark:hover:bg-blue-500 text-white px-4 py-2.5 text-xs font-semibold min-h-[40px]"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>{t.onboarding.openInNewTabHint}</span>
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isInIframe && !showFallbackActions && typeof window !== 'undefined' && (
+              <div className="flex justify-end">
+                <a
+                  href={window.location.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>{t.onboarding.openInNewTabHint}</span>
+                </a>
+              </div>
+            )}
+
+            <div className="pt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
               <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
               <span>
                 {language === 'gu'

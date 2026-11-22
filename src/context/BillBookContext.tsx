@@ -1,10 +1,14 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import {
+  GoogleSignInFailure,
   auth,
   fetchRemoteUserProfile,
+  isOfflineFirestoreError,
+  resolveGoogleRedirectResult,
   saveRemoteUserProfile,
   signInWithGooglePopup,
+  signInWithGoogleRedirect,
   signOutFromFirebase,
 } from '../firebase/firebaseApp';
 import { TRANSLATIONS, TranslationDict } from '../i18n/translations';
@@ -37,7 +41,10 @@ interface BillBookContextValue {
   firebaseUser: User | null;
   userProfile: UserShopProfile | null;
   onboardingStage: OnboardingStage;
+  authRedirectError: GoogleSignInFailure | null;
+  clearAuthRedirectError: () => void;
   signInWithGoogle: () => Promise<void>;
+  signInWithGoogleUsingRedirect: () => Promise<void>;
   completeShopSetup: (input: CompleteSetupInput) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -68,7 +75,11 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SETTINGS);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserShopProfile | null>(null);
+  const [authRedirectError, setAuthRedirectError] = useState<GoogleSignInFailure | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+
+  const popupSignInActiveRef = useRef(false);
+  const syncedUidInFlightRef = useRef<string | null>(null);
 
   const applyThemeDom = useCallback((theme: ThemeMode) => {
     try {
@@ -83,13 +94,52 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
+  const syncProfileForFirebaseUser = useCallback(async (fbUser: User): Promise<void> => {
+    if (syncedUidInFlightRef.current === fbUser.uid) {
+      return;
+    }
+    syncedUidInFlightRef.current = fbUser.uid;
+    try {
+      const latestLocal = await billBookRepo.getUserProfile();
+      if (latestLocal && latestLocal.uid === fbUser.uid && latestLocal.setupCompleted) {
+        setUserProfile(latestLocal);
+        return;
+      }
+
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        const remote = await fetchRemoteUserProfile(fbUser.uid);
+        if (remote && remote.setupCompleted) {
+          await billBookRepo.saveUserProfile(remote);
+          const syncedSettings = await billBookRepo.updateSettings({
+            shopName: remote.shopName,
+            shopNameGu: remote.shopName,
+            phone: remote.shopPhone,
+            address: remote.shopAddress,
+          });
+          setUserProfile(remote);
+          setSettings(syncedSettings);
+          setRefreshTick((k) => k + 1);
+          return;
+        }
+      }
+      setUserProfile(null);
+    } catch (err) {
+      // Never block authentication completion if Firestore profile lookup fails transiently
+      console.warn('Profile sync check deferred; continuing onboarding:', err);
+    } finally {
+      if (syncedUidInFlightRef.current === fbUser.uid) {
+        syncedUidInFlightRef.current = null;
+      }
+    }
+  }, []);
+
   // Splash screen minimum display duration (1.1s)
   useEffect(() => {
     const timer = window.setTimeout(() => setSplashTimerDone(true), 1100);
     return () => window.clearTimeout(timer);
   }, []);
 
-  // Initialize SQLite + restore local settings/profile + subscribe to Firebase Auth
+  // Initialize SQLite + restore local settings/profile + handle redirect result + subscribe to Firebase Auth
   useEffect(() => {
     let mounted = true;
     let unsubscribeAuth: (() => void) | null = null;
@@ -111,33 +161,34 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
         setDbReady(true);
 
+        // Process any pending signInWithRedirect result before resolving auth state
+        try {
+          const redirectUser = await resolveGoogleRedirectResult();
+          if (redirectUser && mounted) {
+            setFirebaseUser(redirectUser);
+            await syncProfileForFirebaseUser(redirectUser);
+          }
+        } catch (redirectErr) {
+          if (mounted) {
+            setAuthRedirectError(
+              redirectErr instanceof GoogleSignInFailure
+                ? redirectErr
+                : new GoogleSignInFailure(
+                    'generic',
+                    redirectErr instanceof Error ? redirectErr.message : 'Redirect sign-in failed'
+                  )
+            );
+          }
+        }
+
+        if (!mounted) return;
+
         unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
           if (!mounted) return;
           setFirebaseUser(fbUser);
 
-          if (fbUser) {
-            try {
-              const latestLocal = await billBookRepo.getUserProfile();
-              if (latestLocal && latestLocal.uid === fbUser.uid && latestLocal.setupCompleted) {
-                if (mounted) setUserProfile(latestLocal);
-              } else if (typeof navigator === 'undefined' || navigator.onLine) {
-                const remote = await fetchRemoteUserProfile(fbUser.uid);
-                if (remote && remote.setupCompleted && mounted) {
-                  await billBookRepo.saveUserProfile(remote);
-                  const syncedSettings = await billBookRepo.updateSettings({
-                    shopName: remote.shopName,
-                    shopNameGu: remote.shopName,
-                    phone: remote.shopPhone,
-                    address: remote.shopAddress,
-                  });
-                  setUserProfile(remote);
-                  setSettings(syncedSettings);
-                }
-              }
-            } catch (err) {
-              // If offline or transient fetch issue, rely on local SQLite profile if present
-              console.warn('Profile sync check deferred:', err);
-            }
+          if (fbUser && !popupSignInActiveRef.current) {
+            await syncProfileForFirebaseUser(fbUser);
           }
 
           if (mounted) setAuthResolved(true);
@@ -153,7 +204,7 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       mounted = false;
       if (unsubscribeAuth) unsubscribeAuth();
     };
-  }, [applyThemeDom]);
+  }, [applyThemeDom, syncProfileForFirebaseUser]);
 
   const ready = dbReady && authResolved;
 
@@ -171,6 +222,10 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const triggerRefresh = useCallback(() => {
     setRefreshTick((k) => k + 1);
+  }, []);
+
+  const clearAuthRedirectError = useCallback(() => {
+    setAuthRedirectError(null);
   }, []);
 
   const updateSettings = useCallback(
@@ -225,25 +280,20 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 
   const signInWithGoogle = useCallback(async () => {
-    const user = await signInWithGooglePopup();
-    setFirebaseUser(user);
-
-    // Check if returning user already completed setup in Firestore
-    const remote = await fetchRemoteUserProfile(user.uid);
-    if (remote && remote.setupCompleted) {
-      await billBookRepo.saveUserProfile(remote);
-      const syncedSettings = await billBookRepo.updateSettings({
-        shopName: remote.shopName,
-        shopNameGu: remote.shopName,
-        phone: remote.shopPhone,
-        address: remote.shopAddress,
-      });
-      setUserProfile(remote);
-      setSettings(syncedSettings);
-      setRefreshTick((k) => k + 1);
-    } else {
-      setUserProfile(null);
+    setAuthRedirectError(null);
+    popupSignInActiveRef.current = true;
+    try {
+      const user = await signInWithGooglePopup();
+      await syncProfileForFirebaseUser(user);
+      setFirebaseUser(user);
+    } finally {
+      popupSignInActiveRef.current = false;
     }
+  }, [syncProfileForFirebaseUser]);
+
+  const signInWithGoogleUsingRedirect = useCallback(async () => {
+    setAuthRedirectError(null);
+    await signInWithGoogleRedirect();
   }, []);
 
   const completeShopSetup = useCallback(
@@ -253,24 +303,50 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         throw new Error('Authenticated Google account is required.');
       }
 
-      const cleanOwner = input.ownerName.trim();
-      const cleanShop = input.shopName.trim();
+      const cleanOwner = input.ownerName.trim() || 'Shop Owner';
+      const cleanShop = input.shopName.trim() || 'Kirana Store';
       const cleanPhone = input.shopPhone.replace(/\D/g, '').slice(-10);
       const cleanAddress = input.shopAddress.trim();
+      const userEmail =
+        currentUser.email ||
+        currentUser.providerData?.find((p) => p.email)?.email ||
+        '';
+      const nowIso = new Date().toISOString();
 
-      const savedRemote = await saveRemoteUserProfile({
-        uid: currentUser.uid,
-        email: currentUser.email || '',
-        ownerName: cleanOwner,
-        shopName: cleanShop,
-        shopPhone: cleanPhone,
-        shopAddress: cleanAddress,
-        photoUrl: currentUser.photoURL || '',
-        setupCompleted: true,
-        language: settings.language,
-      });
+      let savedProfile: UserShopProfile;
+      try {
+        savedProfile = await saveRemoteUserProfile({
+          uid: currentUser.uid,
+          email: userEmail,
+          ownerName: cleanOwner,
+          shopName: cleanShop,
+          shopPhone: cleanPhone,
+          shopAddress: cleanAddress,
+          photoUrl: currentUser.photoURL || '',
+          setupCompleted: true,
+          language: settings.language,
+        });
+      } catch (err) {
+        if (isOfflineFirestoreError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+          savedProfile = {
+            uid: currentUser.uid,
+            email: userEmail,
+            ownerName: cleanOwner,
+            shopName: cleanShop,
+            shopPhone: cleanPhone,
+            shopAddress: cleanAddress,
+            photoUrl: currentUser.photoURL || '',
+            setupCompleted: true,
+            language: settings.language,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+        } else {
+          throw err;
+        }
+      }
 
-      await billBookRepo.saveUserProfile(savedRemote);
+      await billBookRepo.saveUserProfile(savedProfile);
       const updatedSettings = await billBookRepo.updateSettings({
         shopName: cleanShop,
         shopNameGu: cleanShop,
@@ -278,7 +354,7 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         address: cleanAddress,
       });
 
-      setUserProfile(savedRemote);
+      setUserProfile(savedProfile);
       setSettings(updatedSettings);
       setRefreshTick((k) => k + 1);
     },
@@ -311,7 +387,10 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         firebaseUser,
         userProfile,
         onboardingStage,
+        authRedirectError,
+        clearAuthRedirectError,
         signInWithGoogle,
+        signInWithGoogleUsingRedirect,
         completeShopSetup,
         logout,
       }}

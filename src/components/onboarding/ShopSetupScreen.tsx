@@ -50,13 +50,22 @@ export const ShopSetupScreen: React.FC = () => {
         shopAddress: shopAddress.trim(),
       });
     } catch (err) {
-      setErrorMsg(
-        err instanceof Error && err.message.includes('offline')
-          ? t.onboarding.errorNetwork
-          : err instanceof Error
-          ? err.message
-          : t.onboarding.errorGeneric
-      );
+      let displayMsg: string = t.onboarding.errorGeneric;
+      if (err instanceof Error) {
+        if (err.message.toLowerCase().includes('offline')) {
+          displayMsg = t.onboarding.errorNetwork;
+        } else if (err.message.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(err.message) as { error?: string };
+            displayMsg = parsed.error || t.onboarding.errorGeneric;
+          } catch {
+            displayMsg = err.message;
+          }
+        } else {
+          displayMsg = err.message;
+        }
+      }
+      setErrorMsg(displayMsg);
     } finally {
       setSaving(false);
     }
