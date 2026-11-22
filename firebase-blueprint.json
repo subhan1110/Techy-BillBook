@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "UserShopProfile": {
+      "title": "UserShopProfile",
+      "description": "Authenticated shop owner profile and Kirana store metadata linked to Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Authentication user UID."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 200,
+          "description": "Verified Google account email address."
+        },
+        "ownerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Full name of the shop owner."
+        },
+        "shopName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Kirana shop display name."
+        },
+        "shopPhone": {
+          "type": "string",
+          "maxLength": 20,
+          "pattern": "^(|[0-9]{10})$",
+          "description": "Optional 10-digit shop mobile number."
+        },
+        "shopAddress": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Optional shop street address."
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional Google profile photo URL."
+        },
+        "setupCompleted": {
+          "type": "boolean",
+          "description": "Whether initial shop profile onboarding setup has been completed."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["gu", "en"],
+          "description": "Preferred UI language code."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-updated timestamp."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "ownerName",
+        "shopName",
+        "setupCompleted",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserShopProfile"
+      },
+      "description": "Private owner and shop profile document owned exclusively by the authenticated user."
+    }
+  }
+}

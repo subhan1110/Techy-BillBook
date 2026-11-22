@@ -15,10 +15,16 @@ import {
   ShopSettings,
   UdharPaymentMode,
   UdharTransaction,
+  UserShopProfile,
 } from '../types/models';
 
 export interface IBillBookRepository {
   initialize(): Promise<void>;
+
+  // User Profile & Onboarding Session
+  getUserProfile(): Promise<UserShopProfile | null>;
+  saveUserProfile(profile: UserShopProfile): Promise<UserShopProfile>;
+  clearUserProfileSession(): Promise<void>;
 
   // Settings
   getSettings(): Promise<ShopSettings>;

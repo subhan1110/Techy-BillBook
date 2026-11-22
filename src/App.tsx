@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
+import { ShopSetupScreen } from './components/onboarding/ShopSetupScreen';
+import { SplashScreen } from './components/onboarding/SplashScreen';
+import { WelcomeScreen } from './components/onboarding/WelcomeScreen';
 import { BillBookProvider, useBillBook } from './context/BillBookContext';
 import { BillingPage } from './pages/BillingPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -10,7 +14,7 @@ import { UdharPage } from './pages/UdharPage';
 import { AppRoute } from './types/models';
 
 const AppShell: React.FC = () => {
-  const { ready, initError, t } = useBillBook();
+  const { initError, onboardingStage } = useBillBook();
   const [activeRoute, setActiveRoute] = useState<AppRoute>('dashboard');
 
   if (initError) {
@@ -26,17 +30,16 @@ const AppShell: React.FC = () => {
     );
   }
 
-  if (!ready) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-[#09111E] p-6 gap-4">
-        <div className="w-12 h-12 rounded-2xl bg-[#0F294A] text-white flex items-center justify-center font-bold text-xl">
-          ₹
-        </div>
-        <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
-          {t.common.loading}
-        </div>
-      </div>
-    );
+  if (onboardingStage === 'splash') {
+    return <SplashScreen />;
+  }
+
+  if (onboardingStage === 'welcome') {
+    return <WelcomeScreen />;
+  }
+
+  if (onboardingStage === 'setup') {
+    return <ShopSetupScreen />;
   }
 
   return (
@@ -53,8 +56,10 @@ const AppShell: React.FC = () => {
 
 export default function App() {
   return (
-    <BillBookProvider>
-      <AppShell />
-    </BillBookProvider>
+    <ErrorBoundary>
+      <BillBookProvider>
+        <AppShell />
+      </BillBookProvider>
+    </ErrorBoundary>
   );
 }

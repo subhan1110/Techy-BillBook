@@ -186,4 +186,18 @@ export interface BackupSnapshot {
   udharTransactions: UdharTransaction[];
 }
 
+export interface UserShopProfile {
+  uid: string;
+  email: string;
+  ownerName: string;
+  shopName: string;
+  shopPhone: string;
+  shopAddress: string;
+  photoUrl: string;
+  setupCompleted: boolean;
+  language: Language;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AppRoute = 'dashboard' | 'billing' | 'customers' | 'udhar' | 'reports' | 'settings';

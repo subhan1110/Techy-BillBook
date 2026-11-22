@@ -1,7 +1,24 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { User, onAuthStateChanged } from 'firebase/auth';
+import {
+  auth,
+  fetchRemoteUserProfile,
+  saveRemoteUserProfile,
+  signInWithGooglePopup,
+  signOutFromFirebase,
+} from '../firebase/firebaseApp';
 import { TRANSLATIONS, TranslationDict } from '../i18n/translations';
 import { billBookRepo } from '../repositories/sqliteRepository';
-import { Language, ShopSettings, ThemeMode } from '../types/models';
+import { Language, ShopSettings, ThemeMode, UserShopProfile } from '../types/models';
+
+export type OnboardingStage = 'splash' | 'welcome' | 'setup' | 'app';
+
+interface CompleteSetupInput {
+  ownerName: string;
+  shopName: string;
+  shopPhone: string;
+  shopAddress: string;
+}
 
 interface BillBookContextValue {
   ready: boolean;
@@ -15,6 +32,14 @@ interface BillBookContextValue {
   updateSettings: (partial: Partial<ShopSettings>) => Promise<ShopSettings>;
   setLanguage: (lang: Language) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
+
+  // Onboarding & Firebase Auth
+  firebaseUser: User | null;
+  userProfile: UserShopProfile | null;
+  onboardingStage: OnboardingStage;
+  signInWithGoogle: () => Promise<void>;
+  completeShopSetup: (input: CompleteSetupInput) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const DEFAULT_SETTINGS: ShopSettings = {
@@ -35,9 +60,14 @@ const DEFAULT_SETTINGS: ShopSettings = {
 const BillBookContext = createContext<BillBookContextValue | null>(null);
 
 export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [ready, setReady] = useState(false);
+  const [dbReady, setDbReady] = useState(false);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [splashTimerDone, setSplashTimerDone] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SETTINGS);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserShopProfile | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
   const applyThemeDom = useCallback((theme: ThemeMode) => {
@@ -53,26 +83,91 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
+  // Splash screen minimum display duration (1.1s)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSplashTimerDone(true), 1100);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // Initialize SQLite + restore local settings/profile + subscribe to Firebase Auth
   useEffect(() => {
     let mounted = true;
+    let unsubscribeAuth: (() => void) | null = null;
+
     (async () => {
       try {
         await billBookRepo.initialize();
-        const loaded = await billBookRepo.getSettings();
+        const [loadedSettings, localProfile] = await Promise.all([
+          billBookRepo.getSettings(),
+          billBookRepo.getUserProfile(),
+        ]);
+
         if (!mounted) return;
-        setSettings(loaded);
-        applyThemeDom(loaded.theme);
-        document.documentElement.lang = loaded.language;
-        setReady(true);
+        setSettings(loadedSettings);
+        applyThemeDom(loadedSettings.theme);
+        document.documentElement.lang = loadedSettings.language;
+        if (localProfile) {
+          setUserProfile(localProfile);
+        }
+        setDbReady(true);
+
+        unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+          if (!mounted) return;
+          setFirebaseUser(fbUser);
+
+          if (fbUser) {
+            try {
+              const latestLocal = await billBookRepo.getUserProfile();
+              if (latestLocal && latestLocal.uid === fbUser.uid && latestLocal.setupCompleted) {
+                if (mounted) setUserProfile(latestLocal);
+              } else if (typeof navigator === 'undefined' || navigator.onLine) {
+                const remote = await fetchRemoteUserProfile(fbUser.uid);
+                if (remote && remote.setupCompleted && mounted) {
+                  await billBookRepo.saveUserProfile(remote);
+                  const syncedSettings = await billBookRepo.updateSettings({
+                    shopName: remote.shopName,
+                    shopNameGu: remote.shopName,
+                    phone: remote.shopPhone,
+                    address: remote.shopAddress,
+                  });
+                  setUserProfile(remote);
+                  setSettings(syncedSettings);
+                }
+              }
+            } catch (err) {
+              // If offline or transient fetch issue, rely on local SQLite profile if present
+              console.warn('Profile sync check deferred:', err);
+            }
+          }
+
+          if (mounted) setAuthResolved(true);
+        });
       } catch (err) {
         if (!mounted) return;
         setInitError(err instanceof Error ? err.message : 'Database initialization failed');
+        setAuthResolved(true);
       }
     })();
+
     return () => {
       mounted = false;
+      if (unsubscribeAuth) unsubscribeAuth();
     };
   }, [applyThemeDom]);
+
+  const ready = dbReady && authResolved;
+
+  // Determine exact onboarding stage
+  let onboardingStage: OnboardingStage = 'splash';
+  if (ready && splashTimerDone) {
+    if (userProfile?.setupCompleted) {
+      onboardingStage = 'app';
+    } else if (firebaseUser) {
+      onboardingStage = 'setup';
+    } else {
+      onboardingStage = 'welcome';
+    }
+  }
 
   const triggerRefresh = useCallback(() => {
     setRefreshTick((k) => k + 1);
@@ -84,6 +179,31 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setSettings(updated);
       applyThemeDom(updated.theme);
       document.documentElement.lang = updated.language;
+
+      // Keep local userProfile shop metadata aligned if profile exists
+      const currentProf = await billBookRepo.getUserProfile();
+      if (currentProf && currentProf.setupCompleted) {
+        const nextShopName =
+          updated.language === 'gu'
+            ? updated.shopNameGu || updated.shopName
+            : updated.shopName || updated.shopNameGu;
+        const mergedProfile: UserShopProfile = {
+          ...currentProf,
+          shopName: nextShopName || currentProf.shopName,
+          shopPhone: updated.phone ?? currentProf.shopPhone,
+          shopAddress: updated.address ?? currentProf.shopAddress,
+          language: updated.language,
+          updatedAt: new Date().toISOString(),
+        };
+        await billBookRepo.saveUserProfile(mergedProfile);
+        setUserProfile(mergedProfile);
+        if (auth.currentUser && (typeof navigator === 'undefined' || navigator.onLine)) {
+          saveRemoteUserProfile(mergedProfile).catch((err) =>
+            console.warn('Background profile update skipped:', err)
+          );
+        }
+      }
+
       setRefreshTick((k) => k + 1);
       return updated;
     },
@@ -104,6 +224,74 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [updateSettings]
   );
 
+  const signInWithGoogle = useCallback(async () => {
+    const user = await signInWithGooglePopup();
+    setFirebaseUser(user);
+
+    // Check if returning user already completed setup in Firestore
+    const remote = await fetchRemoteUserProfile(user.uid);
+    if (remote && remote.setupCompleted) {
+      await billBookRepo.saveUserProfile(remote);
+      const syncedSettings = await billBookRepo.updateSettings({
+        shopName: remote.shopName,
+        shopNameGu: remote.shopName,
+        phone: remote.shopPhone,
+        address: remote.shopAddress,
+      });
+      setUserProfile(remote);
+      setSettings(syncedSettings);
+      setRefreshTick((k) => k + 1);
+    } else {
+      setUserProfile(null);
+    }
+  }, []);
+
+  const completeShopSetup = useCallback(
+    async (input: CompleteSetupInput) => {
+      const currentUser = auth.currentUser || firebaseUser;
+      if (!currentUser) {
+        throw new Error('Authenticated Google account is required.');
+      }
+
+      const cleanOwner = input.ownerName.trim();
+      const cleanShop = input.shopName.trim();
+      const cleanPhone = input.shopPhone.replace(/\D/g, '').slice(-10);
+      const cleanAddress = input.shopAddress.trim();
+
+      const savedRemote = await saveRemoteUserProfile({
+        uid: currentUser.uid,
+        email: currentUser.email || '',
+        ownerName: cleanOwner,
+        shopName: cleanShop,
+        shopPhone: cleanPhone,
+        shopAddress: cleanAddress,
+        photoUrl: currentUser.photoURL || '',
+        setupCompleted: true,
+        language: settings.language,
+      });
+
+      await billBookRepo.saveUserProfile(savedRemote);
+      const updatedSettings = await billBookRepo.updateSettings({
+        shopName: cleanShop,
+        shopNameGu: cleanShop,
+        phone: cleanPhone,
+        address: cleanAddress,
+      });
+
+      setUserProfile(savedRemote);
+      setSettings(updatedSettings);
+      setRefreshTick((k) => k + 1);
+    },
+    [firebaseUser, settings.language]
+  );
+
+  const logout = useCallback(async () => {
+    await signOutFromFirebase();
+    await billBookRepo.clearUserProfileSession();
+    setFirebaseUser(null);
+    setUserProfile(null);
+  }, []);
+
   const t = (settings.language === 'en' ? TRANSLATIONS.en : TRANSLATIONS.gu) as TranslationDict;
 
   return (
@@ -120,6 +308,12 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updateSettings,
         setLanguage,
         setTheme,
+        firebaseUser,
+        userProfile,
+        onboardingStage,
+        signInWithGoogle,
+        completeShopSetup,
+        logout,
       }}
     >
       {children}

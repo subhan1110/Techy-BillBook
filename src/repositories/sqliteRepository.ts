@@ -23,6 +23,7 @@ import {
   UdharPaymentMode,
   UdharTransaction,
   UnitType,
+  UserShopProfile,
 } from '../types/models';
 import { IBillBookRepository } from './billBookRepository';
 
@@ -274,6 +275,21 @@ export class SqliteBillBookRepository implements IBillBookRepository {
         note TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS user_profile (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        uid TEXT NOT NULL,
+        email TEXT NOT NULL,
+        owner_name TEXT NOT NULL,
+        shop_name TEXT NOT NULL,
+        shop_phone TEXT NOT NULL DEFAULT '',
+        shop_address TEXT NOT NULL DEFAULT '',
+        photo_url TEXT NOT NULL DEFAULT '',
+        setup_completed INTEGER NOT NULL DEFAULT 0,
+        language TEXT NOT NULL DEFAULT 'gu',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_bills_created_at ON bills(created_at);
@@ -1519,6 +1535,83 @@ export class SqliteBillBookRepository implements IBillBookRepository {
   async exportSqliteBytes(): Promise<Uint8Array> {
     await this.initialize();
     return this.getDb().export();
+  }
+
+  async getUserProfile(): Promise<UserShopProfile | null> {
+    await this.initialize();
+    const rows = this.queryRows<{
+      uid: string;
+      email: string;
+      owner_name: string;
+      shop_name: string;
+      shop_phone: string;
+      shop_address: string;
+      photo_url: string;
+      setup_completed: number;
+      language: string;
+      created_at: string;
+      updated_at: string;
+    }>('SELECT * FROM user_profile WHERE id = 1');
+
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      uid: r.uid,
+      email: r.email,
+      ownerName: r.owner_name,
+      shopName: r.shop_name,
+      shopPhone: r.shop_phone,
+      shopAddress: r.shop_address,
+      photoUrl: r.photo_url,
+      setupCompleted: Boolean(r.setup_completed),
+      language: r.language === 'en' ? 'en' : 'gu',
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  async saveUserProfile(profile: UserShopProfile): Promise<UserShopProfile> {
+    await this.initialize();
+    const db = this.getDb();
+    db.run(
+      `INSERT INTO user_profile (
+        id, uid, email, owner_name, shop_name, shop_phone, shop_address,
+        photo_url, setup_completed, language, created_at, updated_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        uid = excluded.uid,
+        email = excluded.email,
+        owner_name = excluded.owner_name,
+        shop_name = excluded.shop_name,
+        shop_phone = excluded.shop_phone,
+        shop_address = excluded.shop_address,
+        photo_url = excluded.photo_url,
+        setup_completed = excluded.setup_completed,
+        language = excluded.language,
+        updated_at = excluded.updated_at`,
+      [
+        profile.uid,
+        profile.email,
+        profile.ownerName,
+        profile.shopName,
+        profile.shopPhone || '',
+        profile.shopAddress || '',
+        profile.photoUrl || '',
+        profile.setupCompleted ? 1 : 0,
+        profile.language,
+        profile.createdAt,
+        profile.updatedAt,
+      ]
+    );
+    await this.persist();
+    return profile;
+  }
+
+  async clearUserProfileSession(): Promise<void> {
+    await this.initialize();
+    const db = this.getDb();
+    db.run('DELETE FROM user_profile WHERE id = 1');
+    await this.persist();
   }
 }
 

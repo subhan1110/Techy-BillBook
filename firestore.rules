@@ -1,0 +1,115 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable hardened primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidUserShopProfile(data) {
+      return data.keys().hasAll([
+        'uid',
+        'email',
+        'ownerName',
+        'shopName',
+        'setupCompleted',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'uid',
+        'email',
+        'ownerName',
+        'shopName',
+        'shopPhone',
+        'shopAddress',
+        'photoUrl',
+        'setupCompleted',
+        'language',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.uid is string
+      && data.uid == request.auth.uid
+      && data.uid.size() >= 1
+      && data.uid.size() <= 128
+      && data.email is string
+      && data.email == request.auth.token.email
+      && data.email.size() >= 3
+      && data.email.size() <= 200
+      && data.ownerName is string
+      && data.ownerName.size() >= 1
+      && data.ownerName.size() <= 120
+      && data.shopName is string
+      && data.shopName.size() >= 1
+      && data.shopName.size() <= 160
+      && (!('shopPhone' in data) || (data.shopPhone is string && data.shopPhone.size() <= 20 && data.shopPhone.matches('^(|[0-9]{10})$')))
+      && (!('shopAddress' in data) || (data.shopAddress is string && data.shopAddress.size() <= 300))
+      && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500))
+      && data.setupCompleted is bool
+      && (!('language' in data) || (data.language is string && data.language in ['gu', 'en']))
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserShopProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidUserShopProfile(incoming())
+        && isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'ownerName',
+          'shopName',
+          'shopPhone',
+          'shopAddress',
+          'photoUrl',
+          'setupCompleted',
+          'language',
+          'updatedAt'
+        ]);
+
+      allow delete: if isValidId(userId) && isOwner(userId);
+    }
+  }
+}
