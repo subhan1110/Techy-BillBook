@@ -1,13 +1,12 @@
-import React, { useRef, useState } from 'react';
-import { Download, MessageCircle, Printer, Share2, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Download, Image as ImageIcon, MessageCircle, Printer, Share2, X } from 'lucide-react';
 import { useBillBook } from '../context/BillBookContext';
 import { formatDateTime, formatINR, getPaymentLabel, getUnitLabel } from '../i18n/translations';
 import { BillWithItems } from '../types/models';
 import {
-  buildWhatsAppBillText,
+  downloadInvoiceImage,
   downloadInvoicePdf,
-  openWhatsAppShare,
-  shareInvoiceNativeOrFallback,
+  shareExactInvoiceFile,
 } from '../utils/invoicePdf';
 
 interface InvoiceModalProps {
@@ -18,10 +17,19 @@ interface InvoiceModalProps {
 export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => {
   const { settings, language, t } = useBillBook();
   const invoiceRef = useRef<HTMLDivElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<'pdf' | 'image' | 'share' | null>(null);
+  const [shareFallbackVisible, setShareFallbackVisible] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  useEffect(() => {
+    setShareFallbackVisible(false);
+    setFeedback(null);
+    setBusyAction(null);
+  }, [bill?.id]);
+
   if (!bill) return null;
+
+  const busy = busyAction !== null;
 
   const shopDisplayName =
     language === 'gu'
@@ -31,32 +39,45 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => 
 
   const handleDownloadPdf = async () => {
     if (!invoiceRef.current || busy) return;
-    setBusy(true);
+    setBusyAction('pdf');
     setFeedback(null);
     try {
       await downloadInvoicePdf(invoiceRef.current, bill.billNumber);
     } catch {
       setFeedback(language === 'gu' ? 'PDF બનાવવામાં ભૂલ આવી.' : 'Failed to generate PDF.');
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   };
 
-  const handleWhatsApp = () => {
-    const text = buildWhatsAppBillText(bill, settings, language);
-    openWhatsAppShare(text, bill.customerPhone);
-  };
-
-  const handleNativeShare = async () => {
+  const handleDownloadImage = async () => {
     if (!invoiceRef.current || busy) return;
-    setBusy(true);
+    setBusyAction('image');
     setFeedback(null);
     try {
-      await shareInvoiceNativeOrFallback(invoiceRef.current, bill, settings, language);
+      await downloadInvoiceImage(invoiceRef.current, bill.billNumber);
     } catch {
-      setFeedback(language === 'gu' ? 'શેર કરવામાં ભૂલ આવી.' : 'Failed to share invoice.');
+      setFeedback(language === 'gu' ? 'Image બનાવવામાં ભૂલ આવી.' : 'Failed to generate image.');
     } finally {
-      setBusy(false);
+      setBusyAction(null);
+    }
+  };
+
+  const handleShareExactBill = async () => {
+    if (!invoiceRef.current || busy) return;
+    setBusyAction('share');
+    setFeedback(null);
+    setShareFallbackVisible(false);
+    try {
+      const outcome = await shareExactInvoiceFile(invoiceRef.current, bill.billNumber);
+      if (outcome === 'unsupported') {
+        setShareFallbackVisible(true);
+      }
+    } catch {
+      setFeedback(t.invoice.shareFailed);
+      setShareFallbackVisible(true);
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -262,6 +283,33 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => 
           {feedback && (
             <p className="text-xs text-red-600 dark:text-red-400 mb-2 text-center">{feedback}</p>
           )}
+          {shareFallbackVisible && (
+            <div className="mb-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 p-3 space-y-2.5">
+              <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">
+                {t.invoice.shareFileUnsupported}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadImage}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0F294A] hover:bg-[#163864] dark:bg-blue-600 dark:hover:bg-blue-500 text-white px-3 py-2 text-xs font-medium cursor-pointer min-h-[38px] disabled:opacity-60"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.invoice.downloadImage}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 text-xs font-medium cursor-pointer min-h-[38px] disabled:opacity-60"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.common.downloadPdf}</span>
+                </button>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             <button
               type="button"
@@ -271,27 +319,32 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => 
             >
               <Download className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap truncate">
-                {busy ? t.invoice.generatingPdf : t.common.downloadPdf}
+                {busyAction === 'pdf' ? t.invoice.generatingPdf : t.common.downloadPdf}
               </span>
             </button>
 
             <button
               type="button"
-              onClick={handleWhatsApp}
-              className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer min-h-[44px]"
+              onClick={handleShareExactBill}
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer min-h-[44px] disabled:opacity-60"
             >
               <MessageCircle className="w-4 h-4 shrink-0" />
-              <span className="whitespace-nowrap truncate">{t.common.shareWhatsapp}</span>
+              <span className="whitespace-nowrap truncate">
+                {busyAction === 'share' ? t.invoice.sharingBill : t.common.shareWhatsapp}
+              </span>
             </button>
 
             <button
               type="button"
-              onClick={handleNativeShare}
+              onClick={handleShareExactBill}
               disabled={busy}
               className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer min-h-[44px] disabled:opacity-60"
             >
               <Share2 className="w-4 h-4 shrink-0" />
-              <span className="whitespace-nowrap truncate">{t.common.shareOther}</span>
+              <span className="whitespace-nowrap truncate">
+                {busyAction === 'share' ? t.invoice.sharingBill : t.common.shareOther}
+              </span>
             </button>
 
             <button

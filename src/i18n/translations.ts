@@ -181,6 +181,10 @@ export const TRANSLATIONS = {
       paymentMode: 'ચુકવણી',
       upiPayNote: 'UPI ID',
       generatingPdf: 'PDF બની રહી છે...',
+      sharingBill: 'બિલ તૈયાર થઈ રહ્યું છે...',
+      downloadImage: 'બિલ Image (PNG) ડાઉનલોડ',
+      shareFileUnsupported: 'આ બ્રાઉઝરમાં WhatsApp પર સીધી બિલ ફાઇલ શેર કરવાની સુવિધા ઉપલબ્ધ નથી. નીચેથી Image અથવા PDF ડાઉનલોડ કરીને WhatsApp માં મોકલો.',
+      shareFailed: 'બિલ શેર કરવામાં ભૂલ આવી. કૃપા કરીને નીચેથી Image અથવા PDF ડાઉનલોડ કરો.',
     },
     customers: {
       title: 'ગ્રાહક મેનેજમેન્ટ',
@@ -473,6 +477,10 @@ export const TRANSLATIONS = {
       paymentMode: 'Payment Mode',
       upiPayNote: 'UPI ID',
       generatingPdf: 'Generating PDF...',
+      sharingBill: 'Preparing bill...',
+      downloadImage: 'Download Image (PNG)',
+      shareFileUnsupported: 'Direct file sharing to WhatsApp is not supported in this browser or window. Download the exact bill Image or PDF below and attach it in WhatsApp.',
+      shareFailed: 'Unable to share the bill file directly. Download the Image or PDF below to share manually.',
     },
     customers: {
       title: 'Customer Management',
