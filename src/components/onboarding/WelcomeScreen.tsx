@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { CheckCircle2, ExternalLink, Globe, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ExternalLink, Globe, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
 import { useBillBook } from '../../context/BillBookContext';
 import {
   GoogleAuthMethod,
@@ -47,6 +47,7 @@ export const WelcomeScreen: React.FC = () => {
     setLanguage,
     signInWithGoogle,
     signInWithGoogleUsingRedirect,
+    enterDemoMode,
     authRedirectError,
     clearAuthRedirectError,
   } = useBillBook();
@@ -294,7 +295,31 @@ export const WelcomeScreen: React.FC = () => {
               </div>
             )}
 
-            {/* Official Google Sign-In Button */}
+            {/* Primary Option 1: Get Started (Demo / Preview Mode) */}
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => void enterDemoMode()}
+                disabled={loading || redirectLoading}
+                className="w-full flex items-center justify-center gap-2.5 rounded-xl bg-[#0F294A] hover:bg-[#163864] active:bg-[#0B1F3A] dark:bg-blue-600 dark:hover:bg-blue-500 text-white px-5 py-3.5 text-sm font-semibold shadow-xs transition-all cursor-pointer min-h-[50px] disabled:opacity-60"
+              >
+                <span>{t.onboarding.getStarted}</span>
+                <ArrowRight className="w-4 h-4 shrink-0" />
+              </button>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center leading-relaxed">
+                {t.onboarding.getStartedHint}
+              </p>
+            </div>
+
+            <div className="relative flex items-center py-0.5">
+              <div className="flex-1 border-t border-slate-200 dark:border-slate-700" />
+              <span className="px-3 text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {t.onboarding.orLabel}
+              </span>
+              <div className="flex-1 border-t border-slate-200 dark:border-slate-700" />
+            </div>
+
+            {/* Option 2: Existing Official Google Sign-In Button */}
             <button
               type="button"
               onClick={handleGoogleLogin}

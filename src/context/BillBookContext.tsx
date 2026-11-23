@@ -12,7 +12,8 @@ import {
   signOutFromFirebase,
 } from '../firebase/firebaseApp';
 import { TRANSLATIONS, TranslationDict } from '../i18n/translations';
-import { billBookRepo } from '../repositories/sqliteRepository';
+import { demoBillBookRepo } from '../repositories/demoRepository';
+import { realBillBookRepo, setDemoRepositoryActive } from '../repositories/sqliteRepository';
 import { Language, ShopSettings, ThemeMode, UserShopProfile } from '../types/models';
 
 export type OnboardingStage = 'splash' | 'welcome' | 'setup' | 'app';
@@ -36,6 +37,12 @@ interface BillBookContextValue {
   updateSettings: (partial: Partial<ShopSettings>) => Promise<ShopSettings>;
   setLanguage: (lang: Language) => Promise<void>;
   setTheme: (theme: ThemeMode) => Promise<void>;
+
+  // Demo / Preview Mode (no real record access or writes)
+  isDemoMode: boolean;
+  enterDemoMode: () => Promise<void>;
+  exitDemoMode: () => Promise<void>;
+  signInFromDemo: () => Promise<void>;
 
   // Onboarding & Firebase Auth
   firebaseUser: User | null;
@@ -75,17 +82,21 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SETTINGS);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserShopProfile | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
   const [authRedirectError, setAuthRedirectError] = useState<GoogleSignInFailure | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
+  const isDemoModeRef = useRef(false);
   const popupSignInActiveRef = useRef(false);
   const syncedUidInFlightRef = useRef<string | null>(null);
 
-  const applyThemeDom = useCallback((theme: ThemeMode) => {
-    try {
-      localStorage.setItem('techy_billbook_theme', theme);
-    } catch {
-      // ignore
+  const applyThemeDom = useCallback((theme: ThemeMode, persistLocal = true) => {
+    if (persistLocal) {
+      try {
+        localStorage.setItem('techy_billbook_theme', theme);
+      } catch {
+        // ignore
+      }
     }
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -100,7 +111,7 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     syncedUidInFlightRef.current = fbUser.uid;
     try {
-      const latestLocal = await billBookRepo.getUserProfile();
+      const latestLocal = await realBillBookRepo.getUserProfile();
       if (latestLocal && latestLocal.uid === fbUser.uid && latestLocal.setupCompleted) {
         setUserProfile(latestLocal);
         return;
@@ -109,8 +120,8 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (typeof navigator === 'undefined' || navigator.onLine) {
         const remote = await fetchRemoteUserProfile(fbUser.uid);
         if (remote && remote.setupCompleted) {
-          await billBookRepo.saveUserProfile(remote);
-          const syncedSettings = await billBookRepo.updateSettings({
+          await realBillBookRepo.saveUserProfile(remote);
+          const syncedSettings = await realBillBookRepo.updateSettings({
             shopName: remote.shopName,
             shopNameGu: remote.shopName,
             phone: remote.shopPhone,
@@ -146,10 +157,11 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     (async () => {
       try {
-        await billBookRepo.initialize();
+        setDemoRepositoryActive(false);
+        await realBillBookRepo.initialize();
         const [loadedSettings, localProfile] = await Promise.all([
-          billBookRepo.getSettings(),
-          billBookRepo.getUserProfile(),
+          realBillBookRepo.getSettings(),
+          realBillBookRepo.getUserProfile(),
         ]);
 
         if (!mounted) return;
@@ -165,6 +177,9 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         try {
           const redirectUser = await resolveGoogleRedirectResult();
           if (redirectUser && mounted) {
+            isDemoModeRef.current = false;
+            setIsDemoMode(false);
+            setDemoRepositoryActive(false);
             setFirebaseUser(redirectUser);
             await syncProfileForFirebaseUser(redirectUser);
           }
@@ -188,6 +203,17 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setFirebaseUser(fbUser);
 
           if (fbUser && !popupSignInActiveRef.current) {
+            if (isDemoModeRef.current) {
+              isDemoModeRef.current = false;
+              setIsDemoMode(false);
+              setDemoRepositoryActive(false);
+              const realSettings = await realBillBookRepo.getSettings();
+              if (mounted) {
+                setSettings(realSettings);
+                applyThemeDom(realSettings.theme);
+                document.documentElement.lang = realSettings.language;
+              }
+            }
             await syncProfileForFirebaseUser(fbUser);
           }
 
@@ -211,7 +237,7 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Determine exact onboarding stage
   let onboardingStage: OnboardingStage = 'splash';
   if (ready && splashTimerDone) {
-    if (userProfile?.setupCompleted) {
+    if (userProfile?.setupCompleted || isDemoMode) {
       onboardingStage = 'app';
     } else if (firebaseUser) {
       onboardingStage = 'setup';
@@ -230,13 +256,22 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const updateSettings = useCallback(
     async (partial: Partial<ShopSettings>) => {
-      const updated = await billBookRepo.updateSettings(partial);
+      if (isDemoModeRef.current) {
+        const updatedDemo = await demoBillBookRepo.updateSettings(partial);
+        setSettings(updatedDemo);
+        applyThemeDom(updatedDemo.theme, false);
+        document.documentElement.lang = updatedDemo.language;
+        setRefreshTick((k) => k + 1);
+        return updatedDemo;
+      }
+
+      const updated = await realBillBookRepo.updateSettings(partial);
       setSettings(updated);
       applyThemeDom(updated.theme);
       document.documentElement.lang = updated.language;
 
       // Keep local userProfile shop metadata aligned if profile exists
-      const currentProf = await billBookRepo.getUserProfile();
+      const currentProf = await realBillBookRepo.getUserProfile();
       if (currentProf && currentProf.setupCompleted) {
         const nextShopName =
           updated.language === 'gu'
@@ -250,7 +285,7 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           language: updated.language,
           updatedAt: new Date().toISOString(),
         };
-        await billBookRepo.saveUserProfile(mergedProfile);
+        await realBillBookRepo.saveUserProfile(mergedProfile);
         setUserProfile(mergedProfile);
         if (auth.currentUser && (typeof navigator === 'undefined' || navigator.onLine)) {
           saveRemoteUserProfile(mergedProfile).catch((err) =>
@@ -279,17 +314,79 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     [updateSettings]
   );
 
+  const enterDemoMode = useCallback(async () => {
+    setAuthRedirectError(null);
+    demoBillBookRepo.reset({
+      language: settings.language,
+      theme: settings.theme,
+    });
+    setDemoRepositoryActive(true);
+    isDemoModeRef.current = true;
+    setIsDemoMode(true);
+    const demoSettings = await demoBillBookRepo.getSettings();
+    setSettings(demoSettings);
+    applyThemeDom(demoSettings.theme, false);
+    document.documentElement.lang = demoSettings.language;
+    setRefreshTick((k) => k + 1);
+  }, [applyThemeDom, settings.language, settings.theme]);
+
+  const exitDemoMode = useCallback(async () => {
+    isDemoModeRef.current = false;
+    setIsDemoMode(false);
+    setDemoRepositoryActive(false);
+    await realBillBookRepo.initialize();
+    const realSettings = await realBillBookRepo.getSettings();
+    setSettings(realSettings);
+    applyThemeDom(realSettings.theme);
+    document.documentElement.lang = realSettings.language;
+    setRefreshTick((k) => k + 1);
+  }, [applyThemeDom]);
+
   const signInWithGoogle = useCallback(async () => {
     setAuthRedirectError(null);
     popupSignInActiveRef.current = true;
     try {
       const user = await signInWithGooglePopup();
+      isDemoModeRef.current = false;
+      setIsDemoMode(false);
+      setDemoRepositoryActive(false);
       await syncProfileForFirebaseUser(user);
       setFirebaseUser(user);
     } finally {
       popupSignInActiveRef.current = false;
     }
   }, [syncProfileForFirebaseUser]);
+
+  const signInFromDemo = useCallback(async () => {
+    setAuthRedirectError(null);
+    popupSignInActiveRef.current = true;
+    try {
+      const user = await signInWithGooglePopup();
+      isDemoModeRef.current = false;
+      setIsDemoMode(false);
+      setDemoRepositoryActive(false);
+      await realBillBookRepo.initialize();
+      const realSettings = await realBillBookRepo.getSettings();
+      setSettings(realSettings);
+      applyThemeDom(realSettings.theme);
+      document.documentElement.lang = realSettings.language;
+      await syncProfileForFirebaseUser(user);
+      setFirebaseUser(user);
+      setRefreshTick((k) => k + 1);
+    } catch (err) {
+      await exitDemoMode();
+      const failure =
+        err instanceof GoogleSignInFailure
+          ? err
+          : new GoogleSignInFailure(
+              'generic',
+              err instanceof Error ? err.message : 'Google Sign-In failed'
+            );
+      setAuthRedirectError(failure);
+    } finally {
+      popupSignInActiveRef.current = false;
+    }
+  }, [applyThemeDom, exitDemoMode, syncProfileForFirebaseUser]);
 
   const signInWithGoogleUsingRedirect = useCallback(async () => {
     setAuthRedirectError(null);
@@ -346,8 +443,8 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
       }
 
-      await billBookRepo.saveUserProfile(savedProfile);
-      const updatedSettings = await billBookRepo.updateSettings({
+      await realBillBookRepo.saveUserProfile(savedProfile);
+      const updatedSettings = await realBillBookRepo.updateSettings({
         shopName: cleanShop,
         shopNameGu: cleanShop,
         phone: cleanPhone,
@@ -362,8 +459,11 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   );
 
   const logout = useCallback(async () => {
+    isDemoModeRef.current = false;
+    setIsDemoMode(false);
+    setDemoRepositoryActive(false);
     await signOutFromFirebase();
-    await billBookRepo.clearUserProfileSession();
+    await realBillBookRepo.clearUserProfileSession();
     setFirebaseUser(null);
     setUserProfile(null);
   }, []);
@@ -384,6 +484,10 @@ export const BillBookProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updateSettings,
         setLanguage,
         setTheme,
+        isDemoMode,
+        enterDemoMode,
+        exitDemoMode,
+        signInFromDemo,
         firebaseUser,
         userProfile,
         onboardingStage,

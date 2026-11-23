@@ -3,7 +3,9 @@ import {
   BarChart3,
   BookOpen,
   Download,
+  Eye,
   LayoutDashboard,
+  LogIn,
   Plus,
   ReceiptText,
   Settings,
@@ -22,10 +24,11 @@ interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ activeRoute, onNavigate, children }) => {
-  const { t, settings, language } = useBillBook();
+  const { t, settings, language, isDemoMode, signInFromDemo, exitDemoMode } = useBillBook();
   const isOnline = useOnlineStatus();
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [signingInDemo, setSigningInDemo] = useState(false);
 
   const navItems: Array<{ id: AppRoute; label: string; icon: React.ReactNode }> = [
     { id: 'dashboard', label: t.nav.dashboard, icon: <LayoutDashboard className="w-5 h-5" /> },
@@ -191,6 +194,56 @@ export const Layout: React.FC<LayoutProps> = ({ activeRoute, onNavigate, childre
             </button>
           </div>
         </header>
+
+        {/* Demo / Preview Mode Banner */}
+        {isDemoMode && (
+          <div className="bg-blue-50 dark:bg-blue-950/50 border-b border-blue-200 dark:border-blue-900/60 px-4 py-2.5 lg:px-8">
+            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+              <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+                <span className="w-7 h-7 rounded-lg bg-[#0F294A] dark:bg-blue-600 text-white flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+                  <Eye className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-[#0F294A] dark:text-blue-200 truncate">
+                    {t.onboarding.demoBannerTitle}
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
+                    {t.onboarding.demoBannerSubtitle}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={signingInDemo}
+                  onClick={() => void exitDemoMode()}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#111C2E] hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 cursor-pointer min-h-[36px] disabled:opacity-60"
+                >
+                  {t.onboarding.exitDemo}
+                </button>
+                <button
+                  type="button"
+                  disabled={signingInDemo}
+                  onClick={async () => {
+                    setSigningInDemo(true);
+                    try {
+                      await signInFromDemo();
+                    } finally {
+                      setSigningInDemo(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#0F294A] hover:bg-[#163864] dark:bg-blue-600 dark:hover:bg-blue-500 text-white text-xs font-semibold shadow-xs cursor-pointer min-h-[36px] disabled:opacity-60"
+                >
+                  <LogIn className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {signingInDemo ? t.onboarding.signingIn : t.onboarding.signInToContinue}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Scrollable Content Viewport */}
         <main className="flex-1 px-4 py-5 pb-24 lg:px-8 lg:py-7 lg:pb-10 max-w-7xl w-full mx-auto">

@@ -3,6 +3,8 @@ import {
   Cloud,
   Database,
   Download,
+  Eye,
+  LogIn,
   LogOut,
   Moon,
   Package,
@@ -34,6 +36,9 @@ export const SettingsPage: React.FC = () => {
     userProfile,
     firebaseUser,
     logout,
+    isDemoMode,
+    signInFromDemo,
+    exitDemoMode,
   } = useBillBook();
   const { isInstallable, isInstalled, install } = usePWAInstall();
 
@@ -44,6 +49,7 @@ export const SettingsPage: React.FC = () => {
   const [showApkGuide, setShowApkGuide] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [signingInDemo, setSigningInDemo] = useState(false);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
@@ -97,6 +103,10 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleExportJson = async () => {
+    if (isDemoMode) {
+      setErrorMsg(t.onboarding.demoBackupBlocked);
+      return;
+    }
     const snapshot = await billBookRepo.exportBackup();
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -110,6 +120,10 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleExportSqlite = async () => {
+    if (isDemoMode) {
+      setErrorMsg(t.onboarding.demoBackupBlocked);
+      return;
+    }
     const bytes = await billBookRepo.exportSqliteBytes();
     const copy = new Uint8Array(bytes.length);
     copy.set(bytes);
@@ -125,6 +139,11 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleRestoreJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isDemoMode) {
+      setErrorMsg(t.onboarding.demoBackupBlocked);
+      e.target.value = '';
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
     setErrorMsg(null);
@@ -170,8 +189,55 @@ export const SettingsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Demo Mode Sign-In Card */}
+      {isDemoMode && (
+        <section className="rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#0F294A] dark:bg-blue-600 text-white flex items-center justify-center shrink-0">
+              <Eye className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                {t.onboarding.demoSettingsTitle}
+              </h3>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                {t.onboarding.demoSettingsDesc}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              disabled={signingInDemo}
+              onClick={async () => {
+                setSigningInDemo(true);
+                try {
+                  await signInFromDemo();
+                } finally {
+                  setSigningInDemo(false);
+                }
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F294A] hover:bg-[#163864] dark:bg-blue-600 dark:hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer min-h-[42px] disabled:opacity-60"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>{signingInDemo ? t.onboarding.signingIn : t.onboarding.signInToContinue}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={signingInDemo}
+              onClick={() => void exitDemoMode()}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#111C2E] hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer min-h-[42px] disabled:opacity-60"
+            >
+              <span>{t.onboarding.exitDemo}</span>
+            </button>
+          </div>
+        </section>
+      )}
+
       {/* Google Account & Session Management */}
-      {userProfile && (
+      {!isDemoMode && userProfile && (
         <section className="rounded-2xl bg-white dark:bg-[#111C2E] border border-slate-200 dark:border-slate-800 p-5 space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-base font-semibold text-slate-900 dark:text-white">
@@ -499,11 +565,18 @@ export const SettingsPage: React.FC = () => {
           </h3>
         </div>
 
+        {isDemoMode && (
+          <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-300">
+            {t.onboarding.demoBackupBlocked}
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2.5">
           <button
             type="button"
+            disabled={isDemoMode}
             onClick={handleExportJson}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer min-h-[42px]"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer min-h-[42px] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download className="w-4 h-4" />
             <span>{t.settings.exportJson}</span>
@@ -511,8 +584,9 @@ export const SettingsPage: React.FC = () => {
 
           <button
             type="button"
+            disabled={isDemoMode}
             onClick={handleExportSqlite}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer min-h-[42px]"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer min-h-[42px] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Database className="w-4 h-4" />
             <span>{t.settings.exportSqlite}</span>
@@ -527,8 +601,9 @@ export const SettingsPage: React.FC = () => {
           />
           <button
             type="button"
+            disabled={isDemoMode}
             onClick={() => restoreInputRef.current?.click()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer min-h-[42px]"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer min-h-[42px] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Upload className="w-4 h-4" />
             <span>{t.settings.restoreJson}</span>

@@ -26,6 +26,7 @@ import {
   UserShopProfile,
 } from '../types/models';
 import { IBillBookRepository } from './billBookRepository';
+import { demoBillBookRepo } from './demoRepository';
 
 const IDB_NAME = 'techy_billbook_sqlite_store';
 const IDB_STORE = 'snapshots';
@@ -1615,4 +1616,22 @@ export class SqliteBillBookRepository implements IBillBookRepository {
   }
 }
 
-export const billBookRepo: IBillBookRepository = new SqliteBillBookRepository();
+export const realBillBookRepo: IBillBookRepository = new SqliteBillBookRepository();
+
+let demoRepositoryActive = false;
+
+export function setDemoRepositoryActive(active: boolean): void {
+  demoRepositoryActive = active;
+}
+
+export function isDemoRepositoryActive(): boolean {
+  return demoRepositoryActive;
+}
+
+export const billBookRepo: IBillBookRepository = new Proxy({} as IBillBookRepository, {
+  get(_target, prop) {
+    const activeRepo = demoRepositoryActive ? demoBillBookRepo : realBillBookRepo;
+    const value = Reflect.get(activeRepo, prop, activeRepo);
+    return typeof value === 'function' ? value.bind(activeRepo) : value;
+  },
+});
