@@ -30,7 +30,7 @@
   ],
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!google[0-9a-f]+\\.html|robots\\.txt|sitemap\\.xml).*)",
       "destination": "/index.html"
     }
   ]
