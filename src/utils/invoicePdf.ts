@@ -274,6 +274,66 @@ export async function shareExactInvoiceFile(
   return 'unsupported';
 }
 
+export function getDirectWhatsAppUrl(phone?: string): string {
+  const digits = (phone || '').replace(/\D/g, '');
+  const waPhone = digits.length === 10 ? `91${digits}` : digits;
+  return waPhone ? `https://wa.me/${waPhone}` : 'https://wa.me/';
+}
+
+export interface DirectWhatsAppResult {
+  copiedToClipboard: boolean;
+  whatsappUrl: string;
+}
+
+/**
+ * Prepares the exact rendered bill preview as a high-resolution PNG image,
+ * downloads it (and copies it to clipboard when supported), and opens WhatsApp
+ * directly without invoking the OS Share Sheet (Outlook/Gmail/Teams) or generating
+ * any separate plain-text bill template.
+ */
+export async function shareBillDirectlyToWhatsApp(
+  element: HTMLElement,
+  billNumber: string,
+  customerPhone?: string
+): Promise<DirectWhatsAppResult> {
+  const pngBlob = await generateInvoiceImageBlob(element);
+
+  let copiedToClipboard = false;
+  if (
+    typeof navigator !== 'undefined' &&
+    navigator.clipboard &&
+    typeof navigator.clipboard.write === 'function' &&
+    typeof ClipboardItem !== 'undefined'
+  ) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'image/png': pngBlob,
+        }),
+      ]);
+      copiedToClipboard = true;
+    } catch {
+      copiedToClipboard = false;
+    }
+  }
+
+  triggerBlobDownload(pngBlob, `Invoice_${billNumber}.png`);
+
+  const whatsappUrl = getDirectWhatsAppUrl(customerPhone);
+  const a = document.createElement('a');
+  a.href = whatsappUrl;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  return {
+    copiedToClipboard,
+    whatsappUrl,
+  };
+}
+
 export function openWhatsAppShare(text: string, phone?: string): void {
   const digits = (phone || '').replace(/\D/g, '');
   const waPhone = digits.length === 10 ? `91${digits}` : digits;

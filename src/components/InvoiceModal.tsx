@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, Image as ImageIcon, MessageCircle, Printer, Share2, X } from 'lucide-react';
+import { Download, ExternalLink, Image as ImageIcon, MessageCircle, Printer, Share2, X } from 'lucide-react';
 import { useBillBook } from '../context/BillBookContext';
 import { formatDateTime, formatINR, getPaymentLabel, getUnitLabel } from '../i18n/translations';
 import { BillWithItems } from '../types/models';
 import {
   downloadInvoiceImage,
   downloadInvoicePdf,
+  shareBillDirectlyToWhatsApp,
   shareExactInvoiceFile,
 } from '../utils/invoicePdf';
 
@@ -17,12 +18,14 @@ interface InvoiceModalProps {
 export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => {
   const { settings, language, t } = useBillBook();
   const invoiceRef = useRef<HTMLDivElement>(null);
-  const [busyAction, setBusyAction] = useState<'pdf' | 'image' | 'share' | null>(null);
+  const [busyAction, setBusyAction] = useState<'pdf' | 'image' | 'whatsapp' | 'share' | null>(null);
   const [shareFallbackVisible, setShareFallbackVisible] = useState(false);
+  const [whatsappNotice, setWhatsappNotice] = useState<{ copied: boolean; url: string } | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     setShareFallbackVisible(false);
+    setWhatsappNotice(null);
     setFeedback(null);
     setBusyAction(null);
   }, [bill?.id]);
@@ -63,10 +66,32 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => 
     }
   };
 
-  const handleShareExactBill = async () => {
+  const handleWhatsAppDirect = async () => {
+    if (!invoiceRef.current || busy) return;
+    setBusyAction('whatsapp');
+    setFeedback(null);
+    setShareFallbackVisible(false);
+    setWhatsappNotice(null);
+    try {
+      const result = await shareBillDirectlyToWhatsApp(
+        invoiceRef.current,
+        bill.billNumber,
+        bill.customerPhone
+      );
+      setWhatsappNotice({ copied: result.copiedToClipboard, url: result.whatsappUrl });
+    } catch {
+      setFeedback(t.invoice.shareFailed);
+      setShareFallbackVisible(true);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleNativeShare = async () => {
     if (!invoiceRef.current || busy) return;
     setBusyAction('share');
     setFeedback(null);
+    setWhatsappNotice(null);
     setShareFallbackVisible(false);
     try {
       const outcome = await shareExactInvoiceFile(invoiceRef.current, bill.billNumber);
@@ -283,6 +308,44 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => 
           {feedback && (
             <p className="text-xs text-red-600 dark:text-red-400 mb-2 text-center">{feedback}</p>
           )}
+          {whatsappNotice && (
+            <div className="mb-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 p-3 space-y-2.5">
+              <p className="text-xs text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                {whatsappNotice.copied
+                  ? t.invoice.whatsappDirectCopied
+                  : t.invoice.whatsappDirectDownloaded}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={whatsappNotice.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-medium min-h-[38px]"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.invoice.openWhatsAppDirect}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={handleDownloadImage}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 text-xs font-medium cursor-pointer min-h-[38px] disabled:opacity-60"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.invoice.downloadImage}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2 text-xs font-medium cursor-pointer min-h-[38px] disabled:opacity-60"
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.common.downloadPdf}</span>
+                </button>
+              </div>
+            </div>
+          )}
           {shareFallbackVisible && (
             <div className="mb-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 p-3 space-y-2.5">
               <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed">
@@ -325,19 +388,19 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ bill, onClose }) => 
 
             <button
               type="button"
-              onClick={handleShareExactBill}
+              onClick={handleWhatsAppDirect}
               disabled={busy}
               className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer min-h-[44px] disabled:opacity-60"
             >
               <MessageCircle className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap truncate">
-                {busyAction === 'share' ? t.invoice.sharingBill : t.common.shareWhatsapp}
+                {busyAction === 'whatsapp' ? t.invoice.sharingBill : t.common.shareWhatsapp}
               </span>
             </button>
 
             <button
               type="button"
-              onClick={handleShareExactBill}
+              onClick={handleNativeShare}
               disabled={busy}
               className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer min-h-[44px] disabled:opacity-60"
             >
