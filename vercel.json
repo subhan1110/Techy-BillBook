@@ -56,7 +56,7 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!google[0-9a-f]+\\.html|robots\\.txt|sitemap\\.xml).*)",
+      "source": "/((?!google[0-9a-f]+\\.html|robots\\.txt|sitemap\\.xml|favicon\\.ico|favicon-[0-9]+x[0-9]+\\.png|icon\\.svg).*)",
       "destination": "/index.html"
     }
   ]

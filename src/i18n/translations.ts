@@ -67,7 +67,7 @@ export function getPaymentLabel(method: PaymentMethod, lang: Language): string {
 
 export const TRANSLATIONS = {
   gu: {
-    appName: 'Techy BillBook',
+    appName: 'TechyBillBook',
     tagline: 'કિરાણા બિલિંગ અને ઉધાર ખાતું',
     offlineReady: 'ઓફલાઇન મોડ સક્રિય — ડેટા ફોનમાં સુરક્ષિત છે',
     nav: {
@@ -313,8 +313,8 @@ export const TRANSLATIONS = {
     },
     onboarding: {
       splashTagline: 'તમારા વ્યવસાય માટે સ્માર્ટ બિલિંગ · Smart Billing for Your Business',
-      welcomeTitle: 'Techy BillBook માં આપનું સ્વાગત છે',
-      welcomeTitleEn: 'Welcome to Techy BillBook',
+      welcomeTitle: 'TechyBillBook માં આપનું સ્વાગત છે',
+      welcomeTitleEn: 'Welcome to TechyBillBook',
       welcomeSubtitle: 'તમારી દુકાન, બિલિંગ અને ગ્રાહકોને સરળતાથી મેનેજ કરો.',
       continueWithGoogle: 'Continue with Google',
       getStarted: 'શરૂ કરો (Get Started)',
@@ -366,7 +366,7 @@ export const TRANSLATIONS = {
     },
   },
   en: {
-    appName: 'Techy BillBook',
+    appName: 'TechyBillBook',
     tagline: 'Kirana Billing & Udhar Khata',
     offlineReady: 'Offline Mode Active — Data stored locally on device',
     nav: {
@@ -612,8 +612,8 @@ export const TRANSLATIONS = {
     },
     onboarding: {
       splashTagline: 'Smart Billing for Your Business',
-      welcomeTitle: 'Welcome to Techy BillBook',
-      welcomeTitleEn: 'Welcome to Techy BillBook',
+      welcomeTitle: 'Welcome to TechyBillBook',
+      welcomeTitleEn: 'Welcome to TechyBillBook',
       welcomeSubtitle: 'Manage your shop, billing and customers easily.',
       continueWithGoogle: 'Continue with Google',
       getStarted: 'Get Started',

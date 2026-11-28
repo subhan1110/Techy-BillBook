@@ -175,7 +175,7 @@ export const WelcomeScreen: React.FC = () => {
         <div className="flex items-center gap-2.5">
           <img
             src="/icon.svg"
-            alt="Techy BillBook"
+            alt="TechyBillBook"
             className="w-8 h-8 rounded-lg"
             referrerPolicy="no-referrer"
           />
@@ -225,7 +225,7 @@ export const WelcomeScreen: React.FC = () => {
               <div className="w-14 h-14 rounded-2xl bg-white p-2 shadow-md">
                 <img
                   src="/icon.svg"
-                  alt="Techy BillBook Logo"
+                  alt="TechyBillBook Logo"
                   className="w-full h-full object-contain"
                   referrerPolicy="no-referrer"
                 />

@@ -12,11 +12,11 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'sql-wasm.wasm'],
+        includeAssets: ['favicon.ico', 'favicon-48x48.png', 'favicon-96x96.png', 'icon.svg', 'apple-touch-icon.png', 'sql-wasm.wasm'],
         manifest: {
           id: '/',
-          name: 'Techy BillBook',
-          short_name: 'BillBook',
+          name: 'TechyBillBook',
+          short_name: 'TechyBillBook',
           description: 'Offline-first Kirana Billing, Udhar Khata, and Analytics app in Gujarati & English.',
           theme_color: '#0F294A',
           background_color: '#F8FAFC',
@@ -52,6 +52,8 @@ export default defineConfig(() => {
             /^\/google[0-9a-f]+\.html$/i,
             /^\/sitemap\.xml$/i,
             /^\/robots\.txt$/i,
+            /^\/favicon\.ico$/i,
+            /^\/favicon-\d+x\d+\.png$/i,
           ],
           runtimeCaching: [
             {
